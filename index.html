@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -69,27 +68,31 @@ const LS   = { save:(k,v)=>{try{localStorage.setItem("cx_"+k,JSON.stringify(v))}
 
 /* ══ DB Mappers ══ */
 const mapT = t => ({ id:t.id, machine:t.machine, description:t.description, operatorId:t.operator_id, operatorName:t.operator_name, leaderId:t.leader_id, leaderName:t.leader_name, status:t.status, priority:t.priority, openedAt:t.opened_at, updatedAt:t.updated_at, history:t.history||[] });
-const mapU = u => ({ id:u.id, username:u.username, password:u.password, name:u.name, email:u.email, phone:u.phone, role:u.role, firstLogin:u.first_login, permissions:u.permissions||{} });
+const mapU = u => ({ id:u.id, username:u.username, password:u.password, name:u.name, email:u.email, phone:u.phone, role:u.role, firstLogin:u.first_login, permissions:u.permissions||{}, recebeEmail:u.recebe_email??false });
 const toDbT = t => ({ id:t.id, machine:t.machine, description:t.description, operator_id:t.operatorId, operator_name:t.operatorName, leader_id:t.leaderId, leader_name:t.leaderName, status:t.status, priority:t.priority, opened_at:t.openedAt, updated_at:t.updatedAt, history:t.history });
-const toDbU = u => ({ id:u.id, username:u.username, password:u.password, name:u.name, email:u.email||"", phone:u.phone||"", role:u.role, first_login:u.firstLogin, permissions:u.permissions });
+const toDbU = u => ({ id:u.id, username:u.username, password:u.password, name:u.name, email:u.email||"", phone:u.phone||"", role:u.role, first_login:u.firstLogin, permissions:u.permissions, recebe_email:u.recebeEmail??false });
 
 /* ══ Email ══ */
 async function enviarEmail(dest, nome, assunto, msg) {
-  if (!EMAIL_CONFIG.ativo||!dest) return;
-  try { await emailjs.send(EMAIL_CONFIG.serviceId, EMAIL_CONFIG.templateId, { to_email:dest, to_name:nome, subject:assunto, message:msg, from_name:"CORTEC Manutenção" }, EMAIL_CONFIG.publicKey); } catch(e) { console.warn("Email:",e); }
+  if (!EMAIL_CONFIG.ativo||!dest||!dest.includes("@")) return;
+  try { await emailjs.send(EMAIL_CONFIG.serviceId, EMAIL_CONFIG.templateId, { to_email:dest, to_name:nome, subject:assunto, message:msg, from_name:"CORTEC Manutenção" }, EMAIL_CONFIG.publicKey); } catch(e) { console.warn("Email erro:",e); }
 }
+
+async function notificarTodos(users, assunto, msg) {
+  const comEmail = users.filter(u => u.recebeEmail && u.email && u.email.includes("@"));
+  for (const u of comEmail) {
+    await enviarEmail(u.email, u.name, assunto, msg);
+  }
+}
+
 async function notificarNovo(tk, users) {
-  const op=users.find(u=>u.id===tk.operatorId), ld=users.find(u=>u.id===tk.leaderId);
-  const msg=`Novo chamado registrado.\n\nChamado: ${tk.id}\nMáquina: ${tk.machine}\nPrioridade: ${PRIO[tk.priority]?.label}\nOperador: ${tk.operatorName}\nAbertura: ${fmtD(tk.openedAt)}\n\nDescrição:\n${tk.description}`;
-  if(ld?.email) await enviarEmail(ld.email,ld.name,`[CORTEC] Novo Chamado: ${tk.machine}`,msg);
-  if(op?.email) await enviarEmail(op.email,op.name,`[CORTEC] Chamado ${tk.id} registrado`,`Seu chamado foi aberto!\n\nChamado: ${tk.id}\nMáquina: ${tk.machine}\nLíder: ${tk.leaderName}`);
+  const msg = `Novo chamado de manutenção registrado.\n\nChamado: ${tk.id}\nMáquina: ${tk.machine}\nPrioridade: ${PRIO[tk.priority]?.label}\nOperador: ${tk.operatorName}\nLíder: ${tk.leaderName}\nAbertura: ${fmtD(tk.openedAt)}\n\nDescrição:\n${tk.description}\n\nAcesse o sistema para acompanhar.`;
+  await notificarTodos(users, `[CORTEC] Novo Chamado: ${tk.machine} (${tk.id})`, msg);
 }
+
 async function notificarStatus(tk, ns, por, users) {
-  const op=users.find(u=>u.id===tk.operatorId), ld=users.find(u=>u.id===tk.leaderId);
-  const msg=`Status atualizado.\n\nChamado: ${tk.id}\nMáquina: ${tk.machine}\nNovo Status: ${STATUS[ns]?.label}\nPor: ${por}\nData: ${fmtD(new Date().toISOString())}`;
-  const subj=`[CORTEC] Chamado ${tk.id} → ${STATUS[ns]?.label}`;
-  if(op?.email) await enviarEmail(op.email,op.name,subj,msg);
-  if(ld?.email&&ld.id!==op?.id) await enviarEmail(ld.email,ld.name,subj,msg);
+  const msg = `Status de chamado atualizado.\n\nChamado: ${tk.id}\nMáquina: ${tk.machine}\nNovo Status: ${STATUS[ns]?.label}\nAtualizado por: ${por}\nData: ${fmtD(new Date().toISOString())}\n\nAcesse o sistema para acompanhar.`;
+  await notificarTodos(users, `[CORTEC] Chamado ${tk.id} → ${STATUS[ns]?.label}`, msg);
 }
 
 /* ══ UI Atoms ══ */
@@ -263,7 +266,7 @@ function NovoChamado({cu,users,onSubmit}) {
     setLoading(true);
     const {error}=await db.from("chamados").insert([toDbT(tk)]);
     if(error){setErr("Erro ao salvar: "+error.message);setLoading(false);return;}
-    await notificarNovo(tk,users);
+    await notificarNovo(tk, users);
     setLoading(false); onSubmit(tk);
   };
   return (
@@ -369,7 +372,7 @@ function Modal({tk,onClose}) {
 
 /* ══ Usuários ══ */
 function Usuarios({users,cu,onAdd,onEdit,onDelete}) {
-  const [modal,setModal]=useState(null); const [form,setForm]=useState({name:"",username:"",email:"",phone:"",role:"operator",permissions:{...DP.operator}}); const [permUser,setPermUser]=useState(null); const [busy,setBusy]=useState(false);
+  const [modal,setModal]=useState(null); const [form,setForm]=useState({name:"",username:"",email:"",phone:"",role:"operator",permissions:{...DP.operator},recebeEmail:false}); const [permUser,setPermUser]=useState(null); const [busy,setBusy]=useState(false);
   const set=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
   const save=async()=>{
     if(!form.name||!form.username||!form.email)return;
@@ -382,7 +385,7 @@ function Usuarios({users,cu,onAdd,onEdit,onDelete}) {
     <div className="anim-in" style={{padding:"22px 18px",maxWidth:900}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
         <h2 style={{fontFamily:"'Rajdhani'",fontWeight:700,fontSize:22,color:"#e6edf3",letterSpacing:.5}}>GESTÃO DE USUÁRIOS</h2>
-        <Btn size="sm" onClick={()=>{setForm({name:"",username:"",email:"",phone:"",role:"operator",permissions:{...DP.operator}});setModal("add");}}>➕ NOVO USUÁRIO</Btn>
+        <Btn size="sm" onClick={()=>{setForm({name:"",username:"",email:"",phone:"",role:"operator",permissions:{...DP.operator},recebeEmail:false});setModal("add");}}>➕ NOVO USUÁRIO</Btn>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {users.map(u=>(
@@ -391,7 +394,7 @@ function Usuarios({users,cu,onAdd,onEdit,onDelete}) {
               <div style={{width:38,height:38,borderRadius:"50%",background:RC[u.role]+"25",border:`1.5px solid ${RC[u.role]}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:RC[u.role],flexShrink:0}}>{u.name.split(" ").map(w=>w[0]).slice(0,2).join("")}</div>
               <div style={{flex:1,minWidth:140}}><p style={{fontSize:14,fontWeight:500,color:"#e6edf3"}}>{u.name}</p><p style={{fontSize:11,color:"#8b949e",fontFamily:"'JetBrains Mono'",marginTop:1}}>{u.username} · {u.email}</p></div>
               <Badge label={ROLES[u.role]} color={RC[u.role]}/>
-              {u.firstLogin&&<Badge label="Trocar senha" color="#f59e0b"/>}
+              {u.firstLogin&&<Badge label="Trocar senha" color="#f59e0b"/>}{u.recebeEmail&&<Badge label="📧 Notif. ativa" color="#10b981"/>}
               <div style={{display:"flex",gap:6}}>
                 <Btn size="sm" variant="ghost" onClick={()=>setPermUser(permUser?.id===u.id?null:u)}>🔐 Permissões</Btn>
                 <Btn size="sm" variant="secondary" onClick={()=>{setForm({...u});setModal(u);}}>✏️ Editar</Btn>
@@ -412,6 +415,13 @@ function Usuarios({users,cu,onAdd,onEdit,onDelete}) {
               <Inp label="E-MAIL *" type="email" value={form.email} onChange={set("email")} placeholder="joao@cortec.com.br"/>
               <Inp label="CELULAR (DDD+Nº)" value={form.phone||""} onChange={set("phone")} placeholder="31988880000"/>
               <Inp label="PERFIL *" select value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value,permissions:{...DP[e.target.value]||DP.operator}}))}>{Object.entries(ROLES).map(([k,v])=><option key={k} value={k}>{v}</option>)}</Inp>
+              <label style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:"#0d1117",borderRadius:7,cursor:"pointer",border:"1px solid #30363d"}}>
+                <input type="checkbox" checked={!!form.recebeEmail} onChange={e=>setForm(f=>({...f,recebeEmail:e.target.checked}))} style={{accentColor:"#f59e0b",width:16,height:16}}/>
+                <div>
+                  <p style={{fontSize:13,color:"#e6edf3",fontWeight:500}}>📧 Receber notificações por e-mail</p>
+                  <p style={{fontSize:11,color:"#8b949e",marginTop:2}}>Receberá e-mail a cada novo chamado e atualização de status</p>
+                </div>
+              </label>
               {modal==="add"&&<p style={{fontSize:11,color:"#8b949e",background:"#f59e0b0f",padding:"8px 12px",borderRadius:6}}>🔑 Senha padrão: <b style={{color:"#f59e0b"}}>123456</b>. Usuário deverá alterar no primeiro acesso.</p>}
               <div style={{display:"flex",gap:10,marginTop:4}}><Btn onClick={save} disabled={busy}>{busy?"Salvando...":(modal==="add"?"CRIAR USUÁRIO":"SALVAR")}</Btn><Btn variant="secondary" onClick={()=>setModal(null)}>CANCELAR</Btn></div>
             </div>
