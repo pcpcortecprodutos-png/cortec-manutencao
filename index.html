@@ -80,9 +80,11 @@ async function enviarEmail(dest, nome, assunto, msg) {
 
 async function notificarTodos(users, assunto, msg) {
   const comEmail = users.filter(u => u.recebeEmail && u.email && u.email.includes("@"));
-  for (const u of comEmail) {
-    await enviarEmail(u.email, u.name, assunto, msg);
-  }
+  console.log("[EMAIL] Destinatários:", comEmail.map(u => u.email));
+  if (comEmail.length === 0) { console.warn("[EMAIL] Nenhum usuário com notificação ativa"); return; }
+  const promises = comEmail.map(u => enviarEmail(u.email, u.name, assunto, msg));
+  await Promise.all(promises);
+  console.log("[EMAIL] Enviados:", comEmail.length);
 }
 
 async function notificarNovo(tk, users) {
@@ -385,7 +387,17 @@ function Usuarios({users,cu,onAdd,onEdit,onDelete}) {
     <div className="anim-in" style={{padding:"22px 18px",maxWidth:900}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
         <h2 style={{fontFamily:"'Rajdhani'",fontWeight:700,fontSize:22,color:"#e6edf3",letterSpacing:.5}}>GESTÃO DE USUÁRIOS</h2>
-        <Btn size="sm" onClick={()=>{setForm({name:"",username:"",email:"",phone:"",role:"operator",permissions:{...DP.operator},recebeEmail:false});setModal("add");}}>➕ NOVO USUÁRIO</Btn>
+        <div style={{display:"flex",gap:8}}>
+          <Btn size="sm" variant="secondary" onClick={async()=>{
+            const comEmail = users.filter(u => u.recebeEmail && u.email && u.email.includes("@"));
+            if(comEmail.length===0){alert("Nenhum usuário com notificação ativa! Edite um usuário e marque a opção de e-mail.");return;}
+            for(let i=0;i<comEmail.length;i++){
+              await enviarEmail(comEmail[i].email, comEmail[i].name, "[CORTEC] Teste de Notificação", "Este é um e-mail de teste do sistema CORTEC Manutenção.\n\nSe chegou, as notificações estão funcionando!");
+            }
+            alert("E-mail de teste enviado para:\n"+comEmail.map(u=>u.email).join("\n"));
+          }}>📧 Testar E-mail</Btn>
+          <Btn size="sm" onClick={()=>{setForm({name:"",username:"",email:"",phone:"",role:"operator",permissions:{...DP.operator},recebeEmail:false});setModal("add");}}>➕ NOVO USUÁRIO</Btn>
+        </div>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {users.map(u=>(
